@@ -5,209 +5,138 @@ from google.oauth2.service_account import Credentials
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import os
-import re
 from datetime import datetime
 
 st.set_page_config(page_title="TCG Master Ball Quant", page_icon="🔮", layout="wide")
 
-# --- 1. 終極大師球 CSS (紫色上、白色下) ---
+# --- 1. 終極大師球 3.0 CSS (完美還原配色) ---
 st.markdown("""
     <style>
     div.stButton > button:first-child {
-        background: linear-gradient(#6a1b9a 50%, #ffffff 50%);
-        color: white; /* 呢個係 M 字色 */
+        background: linear-gradient(#7b2cbf 50%, #ffffff 50%); /* 紫色上, 白色下 */
+        color: #ffffff; /* M 字白色 */
         border-radius: 50%;
-        width: 180px;
-        height: 180px;
+        width: 200px;
+        height: 200px;
         border: 12px solid #333;
-        font-size: 80px !important;
+        font-size: 100px !important;
         font-weight: 900;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
         display: block;
         margin: 20px auto;
         transition: all 0.2s ease;
-        line-height: 0.8; /* 調整 M 字位置向上移入紫色區 */
-        padding-bottom: 40px; 
+        line-height: 0.1; /* 將 M 字托上去紫色區域 */
+        padding-bottom: 90px;
+        position: relative;
     }
+    /* 大師球側邊兩粒粉紅/紅色特徵 */
+    div.stButton > button:first-child::before, div.stButton > button:first-child::after {
+        content: "";
+        position: absolute;
+        width: 35px;
+        height: 15px;
+        background: #ff4d4d;
+        top: 25%;
+        border-radius: 10px;
+    }
+    div.stButton > button:first-child::before { left: 15px; transform: rotate(-35deg); }
+    div.stButton > button:first-child::after { right: 15px; transform: rotate(35deg); }
+
     div.stButton > button:first-child:hover {
-        transform: scale(1.05) rotate(-5deg);
-        border-color: #ff0000;
+        transform: scale(1.08) rotate(5deg);
+        box-shadow: 0 15px 35px rgba(123, 44, 191, 0.6);
     }
     .master-label {
         text-align: center;
         font-weight: 900;
-        color: #6a1b9a;
-        font-size: 24px;
-        text-transform: uppercase;
+        color: #7b2cbf;
+        font-size: 26px;
         letter-spacing: 2px;
+        margin-top: -10px;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 連接 Google Sheets ---
+# --- 2. Google Sheet 連接 ---
 scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 try:
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     SHEET_ID = "1wOxuP_GtaKQpYArGHgVehkR61SwQIywz_9WRSQFwmUM"
     main_sheet = client.open_by_key(SHEET_ID).sheet1
-    try:
-        history_sheet = client.open_by_key(SHEET_ID).worksheet("History")
-    except:
-        history_sheet = None
+    history_sheet = client.open_by_key(SHEET_ID).worksheet("History")
 except Exception as e:
-    st.error(f"❌ 雲端連接失敗: {e}")
+    st.error("❌ Google Sheet 連接失敗")
     st.stop()
 
-# --- 3. 爬蟲核心 (初代暴力搜尋 + 現代精準定位) ---
+# --- 3. 終極爬蟲核心 (對準 price-table-body) ---
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
 install_browser()
 
-def fetch_master_data(url):
+def fetch_master_ball_data(url):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        # 唔加載圖片同 CSS 去換取速度
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        context = browser.new_context(viewport={'width': 1280, 'height': 800})
         page = context.new_page()
         try:
-            # 1. 快速加載
+            # 1. 直接衝入去
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            # 2. 只等表格出現，唔等成個 Page Load 完
-            try:
-                page.wait_for_selector("table", timeout=10000)
-            except:
-                pass 
+            
+            # 2. ⚡ 關鍵：等候 ID 係 price-table-body 嘅地方出現「円」字
+            # 呢個動作係等 JavaScript 將數據填入去
+            page.wait_for_selector("#price-table-body td:has-text('円')", timeout=20000)
             
             html = page.content()
             soup = BeautifulSoup(html, 'html.parser')
             
-            # --- 捉名稱與圖片 ---
-            jp_name = soup.find('h1').get_text(strip=True).split('の')[0] if soup.find('h1') else "未知"
-            img_tag = soup.find('div', class_='product-image') or soup.find('main').find('img') or soup.find('img')
+            # --- 捉名同圖 ---
+            name = soup.find('h1').get_text(strip=True).split('の')[0] if soup.find('h1') else "未知"
+            img_tag = soup.find('div', class_='product-image') or soup.find('main').find('img')
             img_url = "N/A"
             if img_tag:
                 src = img_tag.get('src') or img_tag.get('data-src')
                 img_url = src if src.startswith('http') else f"https://grading.pokeca-chart.com{src}"
 
-            # --- 💡 雙重捉數邏輯 ---
-            res = {"美品": "N/A", "PSA10": "N/A", "差額": "N/A", "比率": "N/A"}
+            # --- 💡 根據大佬提供嘅截圖定位 ---
+            data = {"美品": "N/A", "PSA10": "N/A", "差額": "N/A", "比率": "N/A"}
             
-            # A. 現代精準版：搵 Table 內對應嘅 td
-            rows = soup.find_all('tr')
-            for row in rows:
-                th = row.find('th')
-                td = row.find('td')
-                if th and td:
-                    txt = th.get_text(strip=True)
-                    val = td.get_text(strip=True)
-                    if "美品価格" in txt: res["美品"] = val
-                    elif "PSA10価格" in txt: res["PSA10"] = val
-                    elif "差額" in txt: res["差額"] = val
-                    elif "比率" in txt: res["比率"] = val
+            # 喺 price-table-body 入面搵 <td>
+            tbody = soup.find('tbody', id='price-table-body')
+            if tbody:
+                tds = tbody.find_all('td')
+                # 根據網頁排列順序: 美品(0), PSA10(1), 差額(2), 比率(3)
+                if len(tds) >= 4:
+                    data["美品"] = tds[0].get_text(strip=True)
+                    data["PSA10"] = tds[1].get_text(strip=True)
+                    data["差額"] = tds[2].get_text(strip=True)
+                    data["比率"] = tds[3].get_text(strip=True)
 
-            # B. 初代暴力版：如果仲係 N/A，掃全網 Text
-            if res["美品"] == "N/A" or res["PSA10"] == "N/A":
-                all_text = list(soup.stripped_strings)
-                for i, s in enumerate(all_text):
-                    if "美品価格" in s and res["美品"] == "N/A" and i+1 < len(all_text):
-                        if "円" in all_text[i+1]: res["美品"] = all_text[i+1]
-                    if "PSA10価格" in s and res["PSA10"] == "N/A" and i+1 < len(all_text):
-                        if "円" in all_text[i+1]: res["PSA10"] = all_text[i+1]
-
-            return {
-                "名稱": jp_name, "圖片": img_url,
-                "美品": res["美品"], "PSA10": res["PSA10"], 
-                "差額": res["差額"], "比率": res["比率"]
-            }
+            return {"名稱": name, "圖片": img_url, **data}
         except:
             return None
         finally:
             browser.close()
 
 # --- 4. UI 介面 ---
-st.title("🛡️ TCG Master Ball Quant")
+st.title("🛡️ TCG Master Ball Quant 3.0")
 
-# 側欄
-REAL_PW = st.secrets.get("admin_password", "8888")
-pw = st.sidebar.text_input("🔑 大師授權碼", type="password")
+urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
 
-@st.cache_data(ttl=600)
-def get_urls():
-    return [v for v in main_sheet.col_values(1) if v.startswith("http")]
-
-urls = get_urls()
-
-if pw == REAL_PW:
-    st.sidebar.success("✅ 授權成功")
-    new_urls = st.sidebar.text_area("🔧 名單管理:", value="\n".join(urls), height=200)
-    if st.sidebar.button("💾 儲存名單"):
-        rows = [[u.strip()] for u in new_urls.split("\n") if u.strip()]
-        main_sheet.clear()
-        if rows: main_sheet.update('A1', rows)
-        st.cache_data.clear()
-        st.rerun()
-else:
-    st.sidebar.info("請輸入密碼解鎖大師球")
-
-# --- 🎯 居中大師球 ---
+# 居中大師球按鈕
 st.write("")
-col1, col2, col3 = st.columns([1, 1.5, 1])
+col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
-    master_click = st.button("M") # 呢個 M 字會透過 CSS 擺正位置
-    st.markdown('<p class="master-label">MASTER BALL UPDATE</p>', unsafe_allow_html=True)
-
-if master_click:
-    if not urls:
-        st.warning("名單係空嘅。")
-    else:
-        results = []
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
-        status = st.status("🔮 大師球捕捉中...", expanded=True)
-        for i, url in enumerate(urls):
-            status.write(f"正在掃瞄 ({i+1}/{len(urls)}): {url.split('/')[-1]}")
-            data = fetch_master_data(url)
-            if data:
-                results.append(data)
-        status.update(label="✅ 捕捉完成！", state="complete", expanded=False)
-
-        if results:
-            # 寫入歷史
-            if history_sheet:
-                h_rows = [[now, i["名稱"], f'=IMAGE("{i["圖片"]}")', i["PSA10"], i["美品"], i["差額"], i["比率"]] for i in results]
-                history_sheet.append_rows(h_rows)
+    if st.button("M"):
+        if not urls:
+            st.warning("名單係空嘅。")
+        else:
+            results = []
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            bar = st.progress(0)
+            status = st.empty()
             
-            # 網格顯示
-            st.divider()
-            grid = st.columns(3)
-            for idx, item in enumerate(results):
-                with grid[idx % 3]:
-                    st.image(item["圖片"], use_container_width=True)
-                    st.markdown(f"**{item['名稱']}**")
-                    st.markdown(f"""
-                    <div style="font-size: 15px; border: 2px solid #6a1b9a; padding: 15px; border-radius: 12px; background-color: #f9f4ff; box-shadow: 2px 2px 10px rgba(106, 27, 154, 0.1);">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                            <span style="color: #e67e22; font-weight: bold;">● 美品：</span><b>{item['美品']}</b>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                            <span style="color: #3498db; font-weight: bold;">● PSA10：</span><b>{item['PSA10']}</b>
-                        </div>
-                        <div style="border-top: 1px dashed #6a1b9a; margin-top: 10px; padding-top: 10px;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                                <span style="color: #666;">● 差額：</span><b>{item['差額']}</b>
-                            </div>
-                            <div style="display: flex; justify-content: space-between;">
-                                <span style="color: #666;">● 比率：</span><b>{item['比率']}</b>
-                            </div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    st.write("")
-            st.balloons()
-else:
-    st.info("💡 點擊上方大師球開始手動更新。")
-
-st.divider()
-st.caption("阿強 TCG Cloud Pro | 大師球精準版")
+            for i, url in enumerate(urls):
+                status.write(f"🔮 大師球捕捉中 ({i+1}/{len(urls)})...")
+                res = fetch_
