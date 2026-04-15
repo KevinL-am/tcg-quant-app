@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. 終極 CSS (正宗大師球、閃光特效、港幣專屬樣式) ---
+# --- 2. 終極 CSS (正宗大師球、閃光特效、港幣換算樣式) ---
 st.markdown("""
     <style>
     [data-testid="stSidebarNav"] {display: none;}
@@ -77,7 +77,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. 輔助函數：解析日元數字
+# 3. 輔助函數：解析日元
 def parse_yen(yen_str):
     try:
         if not yen_str or "N/A" in yen_str: return 0
@@ -86,14 +86,13 @@ def parse_yen(yen_str):
     except:
         return 0
 
-# 4. Google Sheet 連接 (大佬的專屬 ID)
+# 4. Google Sheet 連接 (使用大佬張圖嘅新 ID)
 @st.cache_resource
 def connect_gsheet():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
         client = gspread.authorize(creds)
-        # ✅ 使用大佬張圖入面嗰串 ID
         ss = client.open_by_key("1gGDyFS3Ecq0h45zvVpV72ZimxKvrY-HhNUB4IBLNG4")
         main = ss.sheet1
         try:
@@ -107,7 +106,7 @@ def connect_gsheet():
 
 main_sheet, history_sheet = connect_gsheet()
 
-# 5. 爬蟲核心
+# 5. 爬蟲核心 (Turbo 極速分身版)
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
@@ -136,8 +135,6 @@ def fetch_data(url):
                 tds = tbody.find_all('td')
                 if len(tds) >= 4:
                     p_list["美品"], p_list["PSA10"], p_list["差額"], p_list["比率"] = tds[0].text, tds[1].text, tds[2].text, tds[3].text
-            
-            # ✅ 呢度一定要對齊，唔好再漏咗括號喇！
             return {
                 "名稱": name, 
                 "圖片": img_url, 
@@ -151,12 +148,14 @@ def fetch_data(url):
         finally:
             browser.close()
 
-# 6. 頂部導航
+# 6. 頂部控制台 Popover
 head_col, ctrl_col = st.columns([5, 2])
-with head_col: st.title("🛡️ TCG Master Quant Pro")
+with head_col:
+    st.title("🛡️ TCG Master Quant Pro")
+
 with ctrl_col:
     with st.popover("⚙️ 控制台", use_container_width=True):
-        st.write("### 📊 系統設定")
+        st.write("### 📊 換算設定")
         rate = st.number_input("日元匯率 (JPY/HKD)", value=0.051, format="%.4f")
         st.write("---")
         pw = st.text_input("管理授權碼", type="password")
@@ -173,9 +172,61 @@ with ctrl_col:
 st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
 _, ball_mid, _ = st.columns([1, 1, 1])
 with ball_mid:
-    start_capture = st.button("M", key="master_ball_final_run")
+    start_capture = st.button("M", key="master_ball_final_safe")
 
-# 8. 核心加載邏輯
+# 8. 核心邏輯：極速捕捉 + 換算 (確保 Indentation 正確)
 if start_capture:
-    urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
-    if not urls:
+    if main_sheet:
+        urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
+        if not urls:
+            st.warning("名單係空嘅，請先去控制台加網址。")
+        else:
+            st.markdown('<div class="flash-effect"></div>', unsafe_allow_html=True)
+            all_results = []
+            now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            status = st.status("🚀 分身出發，極速捕捉中...", expanded=True)
+            
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                future_to_url = {executor.submit(fetch_data, url): url for url in urls}
+                display_area = st.container()
+                current_batch = []
+                count = 0
+
+                for future in future_to_url:
+                    count += 1
+                    res = future.result()
+                    if res:
+                        all_results.append(res)
+                        current_batch.append(res)
+                        status.write(f"捕捉完成 ({count}/{len(urls)})")
+                    
+                    if len(current_batch) == 3 or count == len(urls):
+                        with display_area:
+                            st.divider()
+                            cols = st.columns(3)
+                            for col_idx, item in enumerate(current_batch):
+                                v_b = parse_yen(item['美品'])
+                                v_p = parse_yen(item['PSA10'])
+                                hkd_b = f"HK$ {v_b * rate:,.0f}"
+                                hkd_p = f"HK$ {v_p * rate:,.0f}"
+                                
+                                with cols[col_idx]:
+                                    st.image(item["圖片"], use_container_width=True)
+                                    st.markdown(f"**{item['名稱']}**")
+                                    st.markdown(f"""
+                                    <div class="price-card">
+                                        <div class="price-row"><span class="price-label" style="color:#e67e22;">● 美品</span><span class="price-val">{item['美品']}</span></div>
+                                        <div class="price-row"><span class="price-label">└ 換算港幣</span><span class="hkd-val">{hkd_b}</span></div>
+                                        <div class="price-sep"></div>
+                                        <div class="price-row"><span class="price-label" style="color:#3498db;">● PSA10</span><span class="price-val">{item['PSA10']}</span></div>
+                                        <div class="price-row"><span class="price-label">└ 換算港幣</span><span class="hkd-val">{hkd_p}</span></div>
+                                        <div class="price-sep"></div>
+                                        <div class="price-row"><span class="price-label">● 差額</span><span class="price-val">{item['差額']}</span></div>
+                                        <div class="price-row"><span class="price-label">● 比率</span><span class="price-val">{item['比率']}</span></div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            current_batch = []
+                
+            status.update(label="✅ 捕捉完畢！", state="complete", expanded=False)
+            if history_sheet and all_results:
+                h_rows = [[now, r["名稱"], r["圖片"], r["PSA10"], r["美品"], r["差額"], r["比率"]] for r in
