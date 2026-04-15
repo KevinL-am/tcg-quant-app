@@ -16,10 +16,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. 終極 CSS (正宗大師球造型、強光爆裂、完美對齊排版) ---
+# --- 2. 終極 CSS (正宗大師球、強光爆裂、完美對齊排版) ---
 st.markdown("""
     <style>
-    /* 隱藏 Sidebar 同頂部標誌 */
+    /* 隱藏 Sidebar */
     [data-testid="stSidebarNav"] {display: none;}
     section[data-testid="stSidebar"] {display: none;}
     .stAppDeployButton {display: none;}
@@ -43,12 +43,12 @@ st.markdown("""
         width: 240px !important;
         height: 240px !important;
         border: 12px solid #333 !important;
-        font-size: 145px !important; /* M 字巨型化 */
+        font-size: 140px !important;
         font-weight: 900 !important;
         box-shadow: 0 15px 45px rgba(0,0,0,0.4) !important;
         transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
         line-height: 1 !important;
-        padding-bottom: 105px !important; /* M 字托上紫色位 */
+        padding-bottom: 95px !important;
         position: relative !important;
         z-index: 100 !important;
         margin: 20px auto !important;
@@ -56,7 +56,6 @@ st.markdown("""
         text-shadow: 3px 5px 15px rgba(0,0,0,0.3) !important;
     }
     
-    /* 大師球紅色耳仔特徵 */
     div.stButton > button:first-child::before, div.stButton > button:first-child::after {
         content: ""; position: absolute; width: 45px; height: 25px;
         background: #ff004f; top: 22%; border-radius: 50%; z-index: -1;
@@ -64,7 +63,7 @@ st.markdown("""
     div.stButton > button:first-child::before { left: 15px; transform: rotate(-35deg); }
     div.stButton > button:first-child::after { right: 15px; transform: rotate(35deg); }
 
-    /* 數據卡片：完美左右對齊 */
+    /* 數據卡片排版 */
     .price-card {
         border: 2px solid #7b2cbf;
         padding: 18px;
@@ -106,7 +105,7 @@ def connect_gsheet():
 
 main_sheet, history_sheet = connect_gsheet()
 
-# 4. 爬蟲核心 (Turbo 極速版)
+# 4. 爬蟲核心
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
@@ -117,7 +116,6 @@ def fetch_data(url):
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0")
         page = context.new_page()
-        # 阻擋圖片加載提速
         page.route("**/*.{png,jpg,jpeg,gif,svg,webp,css,woff,woff2}", lambda route: route.abort())
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -138,8 +136,7 @@ def fetch_data(url):
                 if len(tds) >= 4:
                     p_list["美品"], p_list["PSA10"], p_list["差額"], p_list["比率"] = tds[0].text, tds[1].text, tds[2].text, tds[3].text
             
-            # ✅ 修復位：確保括號正確關閉
-            return {"名稱": name, "圖片": img_url, **p_list}
+            return {"名稱": name, "圖片": img_url, "美品": p_list["美品"], "PSA10": p_list["PSA10"], "差額": p_list["差額"], "比率": p_list["比率"]}
         except:
             return None
         finally:
@@ -162,4 +159,59 @@ with ctrl_col:
 
 # 6. 主介面：大師球
 st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
-_, ball_mid, _ = st.columns(
+
+# ✅ 修正位：確保括號正確關閉
+_, ball_mid, _ = st.columns([1, 1, 1])
+with ball_mid:
+    start_capture = st.button("M", key="master_ball_vfinal")
+
+# 7. 流式加載邏輯
+if start_capture:
+    urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
+    if not urls:
+        st.warning("名單係空嘅。")
+    else:
+        st.markdown('<div class="flash-effect"></div>', unsafe_allow_html=True)
+        all_results = []
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        status = st.status("🔮 大師球捕捉中...", expanded=True)
+        
+        current_batch = []
+        display_area = st.container()
+
+        for i, url in enumerate(urls):
+            status.write(f"掃瞄 ({i+1}/{len(urls)})：{url.split('/')[-1]}")
+            res = fetch_data(url)
+            if res:
+                all_results.append(res)
+                current_batch.append(res)
+                
+                if len(current_batch) == 3 or i == len(urls) - 1:
+                    with display_area:
+                        st.divider()
+                        cols = st.columns(3)
+                        for col_idx, item in enumerate(current_batch):
+                            with cols[col_idx]:
+                                st.image(item["圖片"], use_container_width=True)
+                                st.markdown(f"**{item['名稱']}**")
+                                st.markdown(f"""
+                                <div class="price-card">
+                                    <div class="price-row"><span class="price-label" style="color:#e67e22;">● 美品價格</span><span class="price-val">{item['美品']}</span></div>
+                                    <div class="price-row"><span class="price-label" style="color:#3498db;">● PSA10價格</span><span class="price-val">{item['PSA10']}</span></div>
+                                    <div class="price-sep"></div>
+                                    <div class="price-row"><span class="price-label">● 差額</span><span class="price-val">{item['差額']}</span></div>
+                                    <div class="price-row"><span class="price-label">● 比率</span><span class="price-val">{item['比率']}</span></div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    current_batch = []
+            
+        status.update(label="✅ 捕捉完畢！", state="complete", expanded=False)
+        
+        if history_sheet and all_results:
+            h_rows = [[now, r["名稱"], r["圖片"], r["PSA10"], r["美品"], r["差額"], r["比率"]] for r in all_results]
+            history_sheet.append_rows(h_rows)
+else:
+    st.info("💡 點擊大師球啟動捕捉。")
+
+st.divider()
+st.caption("阿強 TCG Cloud Pro | 2026 終極流式完工版")
