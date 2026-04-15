@@ -25,7 +25,7 @@ except Exception as e:
     st.error(f"❌ 雲端連接失敗: {e}")
     st.stop()
 
-# --- 2. 爬蟲核心 (修正版：分開價錢標籤) ---
+# --- 2. 爬蟲核心 (雷達校準版) ---
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
@@ -44,7 +44,7 @@ def fetch_card_data(url):
             card_id = url.rstrip('/').split('/')[-1].upper()
             h1_tag = soup.find('h1')
             raw_title = h1_tag.get_text(strip=True) if h1_tag else "未知"
-            jp_name = raw_title.replace("のPSA10/美品価格推移", "").replace("のPSA10/美品買取価格推移", "")
+            jp_name = raw_title.replace("のPSA10/美品價格推移", "").replace("推移", "")
             
             # 捉圖片
             img_tag = soup.find('main').find('img') or soup.find('img', class_='product-image')
@@ -55,23 +55,36 @@ def fetch_card_data(url):
             
             name_ch = GoogleTranslator(source='auto', target='zh-TW').translate(jp_name)
             
-            # 💡 修正價錢邏輯：精確定位關鍵字後的數字
+            # 💡 重點修正：更強大的價錢定位雷達
             text_blocks = list(soup.stripped_strings)
-            def find_price(target_key):
+            
+            def find_price_refined(keywords):
                 for i, text in enumerate(text_blocks):
-                    if target_key in text:
-                        # 喺關鍵字後面搵最近嗰個帶有「円」嘅字
-                        for j in range(1, 5):
-                            if i + j < len(text_blocks) and "円" in text_blocks[i+j]:
-                                return text_blocks[i+j]
+                    # 只要區塊包含關鍵字 (例如 "美品")
+                    if any(k in text for k in keywords):
+                        # 檢查呢個區塊本身係咪已經帶有 "円" (有時標籤同價錢喺埋一齊)
+                        if "円" in text:
+                            # 提取數字部分 (例如: 美品價格：12,000円 -> 12,000円)
+                            return text.split('：')[-1].split(':')[-1]
+                        
+                        # 否則向後搵 3 格
+                        for j in range(1, 4):
+                            if i + j < len(text_blocks):
+                                next_text = text_blocks[i+j]
+                                if "円" in next_text:
+                                    return next_text
                 return "N/A"
+
+            # 分開精確關鍵字去搵
+            bi_hin = find_price_refined(["美品価格", "美品買取"])
+            psa10 = find_price_refined(["PSA10価格", "PSA10買取"])
                 
             return {
                 "卡片編號": card_id,
                 "名稱": name_ch,
                 "圖片": img_url,
-                "美品価格": find_price("美品価格"), 
-                "PSA10価格": find_price("PSA10価格")
+                "美品価格": bi_hin, 
+                "PSA10価格": psa10
             }
         except: return None
         finally: browser.close()
@@ -79,12 +92,10 @@ def fetch_card_data(url):
 # --- 3. UI 介面 ---
 st.title("📊 TCG Quant 精細監控版")
 
-# 讀取 Secrets 密碼
 REAL_PW = st.secrets.get("admin_password", "8888")
 pw = st.sidebar.text_input("管理員密碼", type="password")
 
-# 只有在初次啟動或密碼正確時才讀取一次網址名單 (避免每次互動都重新 API 讀取)
-@st.cache_data(ttl=60) # 緩存名單一分鐘
+@st.cache_data(ttl=60)
 def get_cloud_urls():
     try: return [v for v in main_sheet.col_values(1) if v.startswith("http")]
     except: return []
@@ -106,7 +117,6 @@ else:
 
 target_list = [l.strip() for l in new_urls.split("\n") if l.strip()]
 
-# 🚀 只有按下按鈕才會啟動爬蟲，解決「入去自動 Load」問題
 if st.button(f"🚀 更新數據並寫入歷史 ({len(target_list)} 張)"):
     if not target_list:
         st.warning("名單係空嘅。")
@@ -123,38 +133,31 @@ if st.button(f"🚀 更新數據並寫入歷史 ({len(target_list)} 張)"):
             if data: results.append(data)
             progress.progress((i + 1) / len(target_list))
         
-        status_box.empty() # 完成後清除狀態文字
+        status_box.empty()
         
         if results:
-            # --- 網格大圖顯示 ---
-            cols_num = 3
             st.divider()
-            grid_cols = st.columns(cols_num)
+            grid_cols = st.columns(3)
             
             for i, item in enumerate(results):
-                with grid_cols[i % cols_num]:
-                    # 1. 圖片 (維持大圖)
+                with grid_cols[i % 3]:
                     st.image(item["圖片"], use_container_width=True)
-                    
-                    # 2. 編號與翻譯名稱 (細字體)
                     st.caption(f"ID: {item['卡片編號']}")
                     st.markdown(f"**{item['名稱']}**")
                     
-                    # 3. 價錢顯示 (細字體 + 顏色區分)
-                    # 用 Markdown 代替 st.metric，可以精確控制大小
+                    # 顯示價錢，加強排版
                     st.markdown(f"""
-                    <div style="font-size: 14px; border-top: 1px solid #ddd; padding-top: 5px;">
-                        <span style="color: #666;">美品:</span> <b>{item['美品価格']}</b><br>
-                        <span style="color: #3498db;">PSA10:</span> <b>{item['PSA10価格']}</b>
+                    <div style="font-size: 14px; border-top: 1px solid #eee; padding-top: 8px; line-height: 1.6;">
+                        <span style="color: #e67e22; font-weight: bold;">美品：</span> <span>{item['美品価格']}</span><br>
+                        <span style="color: #3498db; font-weight: bold;">PSA10：</span> <span>{item['PSA10価格']}</span>
                     </div>
                     """, unsafe_allow_html=True)
-                    st.write("") # 撐開一點空間
+                    st.write("") 
             
-            # 💾 寫入 History
             if history_sheet:
                 history_rows = [[now, item["卡片編號"], item["名稱"], f'=IMAGE("{item["圖片"]}")', item["PSA10価格"], item["美品価格"]] for item in results]
                 history_sheet.append_rows(history_rows)
-                st.toast(f"✅ 歷史數據已存入 Google Sheet！", icon="📉")
+                st.toast(f"✅ 歷史數據已同步！", icon="📉")
 
 st.divider()
-st.caption("阿強 Cloud Pro | 精細化 UI 版")
+st.caption("阿強 Cloud Pro | 價錢修正版")
