@@ -14,7 +14,7 @@ st.set_page_config(page_title="TCG Master Quant Pro", page_icon="🔮", layout="
 # --- 1. 終極「正宗」大師球 CSS ---
 st.markdown("""
     <style>
-    /* 全螢幕閃光動畫 */
+    /* 全螢幕閃光動畫 (Master Ball Burst) */
     @keyframes flash {
         0% { opacity: 0; background-color: #ffffff; }
         50% { opacity: 1; background-color: #ffffff; }
@@ -29,13 +29,15 @@ st.markdown("""
         animation: flash 0.6s ease-out;
     }
 
-    /* 容器居中 */
+    /* 容器居中：確保球同字都喺正中間 */
     .master-container {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        margin: 40px 0;
+        text-align: center;
+        margin: 40px auto;
+        width: 100%;
     }
 
     /* 正宗大師球按鈕 */
@@ -43,18 +45,19 @@ st.markdown("""
         background: linear-gradient(#7b2cbf 48%, #333 48%, #333 52%, #ffffff 52%);
         color: #ffffff !important;
         border-radius: 50%;
-        width: 240px;
-        height: 240px;
-        border: 10px solid #333;
-        font-size: 140px !important;
+        width: 250px;
+        height: 250px;
+        border: 12px solid #333;
+        font-size: 150px !important; /* 巨型 M 字 */
         font-weight: 900;
         box-shadow: 0 15px 40px rgba(0,0,0,0.4);
         transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
         line-height: 1;
-        padding-bottom: 90px;
+        padding-bottom: 110px; /* 將 M 字托上去紫色區 */
         position: relative;
         text-shadow: 3px 5px 15px rgba(0,0,0,0.4);
         z-index: 1;
+        margin: 0 auto;
     }
     
     /* 大師球兩邊嘅紅色正宗特徵 */
@@ -63,7 +66,7 @@ st.markdown("""
         position: absolute;
         width: 45px;
         height: 25px;
-        background: #ff004f; /* 正宗紅 */
+        background: #ff004f;
         top: 20%;
         border-radius: 50%;
         z-index: -1;
@@ -74,17 +77,17 @@ st.markdown("""
     div.stButton > button:first-child:hover {
         transform: scale(1.1) rotate(5deg);
         box-shadow: 0 20px 50px rgba(123, 44, 191, 0.6);
-        border-color: #000;
     }
 
     .master-label {
-        text-align: center;
         font-weight: 900;
         color: #7b2cbf;
         font-size: 28px;
         letter-spacing: 5px;
         text-transform: uppercase;
-        margin-top: 15px;
+        margin-top: 20px;
+        width: 100%;
+        display: block;
     }
 
     /* 數據框整潔排版 */
@@ -121,7 +124,7 @@ def connect_gsheet():
 
 main_sheet, history_sheet = connect_gsheet()
 
-# --- 3. 爬蟲核心 (Turbo 極速版) ---
+# --- 3. 爬蟲核心 ---
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
@@ -132,30 +135,5 @@ def fetch_card_data(url):
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         page = context.new_page()
-        # 阻擋非必要資源以提速
-        page.route("**/*.{png,jpg,jpeg,gif,svg,webp,css,woff,woff2}", lambda route: route.abort())
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_selector("#price-table-body td", timeout=15000)
-            html = page.content()
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            name = soup.find('h1').get_text(strip=True).split('の')[0] if soup.find('h1') else "未知"
-            
-            img_tag = soup.find('div', class_='product-image') or soup.find('main').find('img')
-            img_url = "N/A"
-            if img_tag:
-                src = img_tag.get('src') or img_tag.get('data-src')
-                if src:
-                    img_url = src if src.startswith('http') else f"https://grading.pokeca-chart.com{src}"
-
-            data = {"美品": "N/A", "PSA10": "N/A", "差額": "N/A", "比率": "N/A"}
-            tbody = soup.find('tbody', id='price-table-body')
-            if tbody:
-                tds = tbody.find_all('td')
-                if len(tds) >= 4:
-                    data["美品"] = tds[0].get_text(strip=True)
-                    data["PSA10"] = tds[1].get_text(strip=True)
-                    data["差額"] = tds[2].get_text(strip=True)
-                    data["比率"] = tds[3].get_text(strip=True)
-            return {"名稱": name, "圖片": img_url,
+        # 阻擋資源提速
+        page.route("**/*.{png,jpg,jpeg,gif
