@@ -7,8 +7,9 @@ from bs4 import BeautifulSoup
 import os
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-# 1. 頁面設定：徹底隱藏 Sidebar，寬屏佈局
+# 頁面設定
 st.set_page_config(
     page_title="TCG Master Quant Pro",
     page_icon="🔮",
@@ -16,15 +17,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. 終極 CSS (正宗大師球、強光爆裂、完美對齊排版) ---
+# --- 1. 終極 CSS (正宗大師球、完美排版) ---
 st.markdown("""
     <style>
-    /* 隱藏 Sidebar */
     [data-testid="stSidebarNav"] {display: none;}
     section[data-testid="stSidebar"] {display: none;}
     .stAppDeployButton {display: none;}
 
-    /* 全螢幕閃光動畫 */
     @keyframes flash {
         0% { opacity: 0; background-color: #ffffff; }
         50% { opacity: 1; background-color: #ffffff; }
@@ -35,7 +34,6 @@ st.markdown("""
         z-index: 9999; pointer-events: none; animation: flash 0.6s ease-out;
     }
 
-    /* 正宗大師球按鈕：紫上、白底、黑腰帶、紅耳 */
     div.stButton > button:first-child {
         background: linear-gradient(#7b2cbf 48%, #333 48%, #333 52%, #ffffff 52%) !important;
         color: #ffffff !important;
@@ -63,7 +61,6 @@ st.markdown("""
     div.stButton > button:first-child::before { left: 15px; transform: rotate(-35deg); }
     div.stButton > button:first-child::after { right: 15px; transform: rotate(35deg); }
 
-    /* 數據卡片排版 */
     .price-card {
         border: 2px solid #7b2cbf;
         padding: 18px;
@@ -72,20 +69,14 @@ st.markdown("""
         box-shadow: 4px 4px 15px rgba(0,0,0,0.05);
         margin-bottom: 25px;
     }
-    .price-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-        width: 100%;
-    }
+    .price-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; width: 100%; }
     .price-label { font-weight: bold; color: #555; font-size: 15px; white-space: nowrap; }
     .price-val { font-weight: 900; color: #000; font-size: 17px; text-align: right; flex-grow: 1; margin-left: 10px; }
     .price-sep { border-top: 1px dashed #7b2cbf; margin: 12px 0; width: 100%; }
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Google Sheet 連接
+# 2. Google Sheet 連接
 @st.cache_resource
 def connect_gsheet():
     try:
@@ -105,17 +96,19 @@ def connect_gsheet():
 
 main_sheet, history_sheet = connect_gsheet()
 
-# 4. 爬蟲核心
+# 3. 爬蟲核心
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
 install_browser()
 
 def fetch_data(url):
+    # 每個 Thread 獨立開啟 Playwright 確保唔會撞
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0")
         page = context.new_page()
+        # 阻擋圖片 CSS 提速
         page.route("**/*.{png,jpg,jpeg,gif,svg,webp,css,woff,woff2}", lambda route: route.abort())
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -135,14 +128,13 @@ def fetch_data(url):
                 tds = tbody.find_all('td')
                 if len(tds) >= 4:
                     p_list["美品"], p_list["PSA10"], p_list["差額"], p_list["比率"] = tds[0].text, tds[1].text, tds[2].text, tds[3].text
-            
             return {"名稱": name, "圖片": img_url, "美品": p_list["美品"], "PSA10": p_list["PSA10"], "差額": p_list["差額"], "比率": p_list["比率"]}
         except:
             return None
         finally:
             browser.close()
 
-# 5. 頂部導航
+# 4. 頂部導航
 head_col, ctrl_col = st.columns([6, 1.5])
 with head_col: st.title("🛡️ TCG Master Quant Pro")
 with ctrl_col:
@@ -157,15 +149,13 @@ with ctrl_col:
                 st.cache_data.clear()
                 st.rerun()
 
-# 6. 主介面：大師球
+# 5. 主介面
 st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
-
-# ✅ 修正位：確保括號正確關閉
 _, ball_mid, _ = st.columns([1, 1, 1])
 with ball_mid:
-    start_capture = st.button("M", key="master_ball_vfinal")
+    start_capture = st.button("M", key="master_ball_v_turbo")
 
-# 7. 流式加載邏輯
+# 6. 極速分身加載邏輯
 if start_capture:
     urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
     if not urls:
@@ -174,19 +164,29 @@ if start_capture:
         st.markdown('<div class="flash-effect"></div>', unsafe_allow_html=True)
         all_results = []
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        status = st.status("🔮 大師球捕捉中...", expanded=True)
+        status = st.status("🚀 大師球分身出發中...", expanded=True)
         
-        current_batch = []
-        display_area = st.container()
+        # 💡 使用 ThreadPoolExecutor 同時捉 3 張
+        # Max_workers 唔好設太高，費事 Streamlit Cloud 粒 CPU 頂唔順，3-5 係最穩陣嘅高速
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # 提交所有任務
+            future_to_url = {executor.submit(fetch_data, url): url for url in urls}
+            
+            # 準備顯示區域
+            display_area = st.container()
+            current_batch = []
+            count = 0
 
-        for i, url in enumerate(urls):
-            status.write(f"掃瞄 ({i+1}/{len(urls)})：{url.split('/')[-1]}")
-            res = fetch_data(url)
-            if res:
-                all_results.append(res)
-                current_batch.append(res)
+            for future in future_to_url:
+                count += 1
+                res = future.result()
+                if res:
+                    all_results.append(res)
+                    current_batch.append(res)
+                    status.write(f"捕捉完成 ({count}/{len(urls)})：{res['名稱']}")
                 
-                if len(current_batch) == 3 or i == len(urls) - 1:
+                # 每夠 3 張就出一行
+                if len(current_batch) == 3 or count == len(urls):
                     with display_area:
                         st.divider()
                         cols = st.columns(3)
@@ -203,15 +203,15 @@ if start_capture:
                                     <div class="price-row"><span class="price-label">● 比率</span><span class="price-val">{item['比率']}</span></div>
                                 </div>
                                 """, unsafe_allow_html=True)
-                    current_batch = []
+                        current_batch = []
             
-        status.update(label="✅ 捕捉完畢！", state="complete", expanded=False)
+        status.update(label="✅ 全體收服完成！", state="complete", expanded=False)
         
         if history_sheet and all_results:
             h_rows = [[now, r["名稱"], r["圖片"], r["PSA10"], r["美品"], r["差額"], r["比率"]] for r in all_results]
             history_sheet.append_rows(h_rows)
 else:
-    st.info("💡 點擊大師球啟動捕捉。")
+    st.info("💡 準備就緒。點擊大師球啟動「分身術」極速捕捉。")
 
 st.divider()
-st.caption("阿強 TCG Cloud Pro | 2026 終極流式完工版")
+st.caption("阿強 TCG Cloud Pro | 2026 極速並行完工版")
