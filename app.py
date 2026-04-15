@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. 終極 CSS (包含正宗大師球、閃光特效、HKD 專屬樣式) ---
+# --- 2. 終極 CSS (正宗大師球、閃光特效、港幣專屬樣式) ---
 st.markdown("""
     <style>
     [data-testid="stSidebarNav"] {display: none;}
@@ -35,7 +35,6 @@ st.markdown("""
         z-index: 9999; pointer-events: none; animation: flash 0.6s ease-out;
     }
 
-    /* 正宗大師球按鈕 */
     div.stButton > button:first-child {
         background: linear-gradient(#7b2cbf 48%, #333 48%, #333 52%, #ffffff 52%) !important;
         color: #ffffff !important;
@@ -62,7 +61,6 @@ st.markdown("""
     div.stButton > button:first-child::before { left: 10px; transform: rotate(-35deg); }
     div.stButton > button:first-child::after { right: 10px; transform: rotate(35deg); }
 
-    /* 數據卡片排版 */
     .price-card {
         border: 2px solid #7b2cbf;
         padding: 15px;
@@ -71,13 +69,7 @@ st.markdown("""
         box-shadow: 4px 4px 15px rgba(0,0,0,0.05);
         margin-bottom: 20px;
     }
-    .price-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 5px;
-        width: 100%;
-    }
+    .price-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; width: 100%; }
     .price-label { font-weight: bold; color: #555; font-size: 13px; }
     .price-val { font-weight: 900; color: #000; font-size: 15px; text-align: right; }
     .hkd-val { font-weight: 900; color: #b8860b; font-size: 15px; text-align: right; }
@@ -85,7 +77,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. 輔助函數：將「12,100円」轉換為數字
+# 3. 輔助函數：解析日元數字
 def parse_yen(yen_str):
     try:
         if not yen_str or "N/A" in yen_str: return 0
@@ -94,14 +86,15 @@ def parse_yen(yen_str):
     except:
         return 0
 
-# 4. Google Sheet 連接
+# 4. Google Sheet 連接 (已更新 ID)
 @st.cache_resource
 def connect_gsheet():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
         client = gspread.authorize(creds)
-        ss = client.open_by_key("1wOxuP_GtaKQpYArGHgVehkR61SwQIywz_9WRSQFwmUM")
+        # ✅ 第 89 行：已換上大佬的新 Sheet ID
+        ss = client.open_by_key("1gGDyFS3Ecq0h45zvVpV72ZimxKvrY-HhNUB4IBLNG4")
         main = ss.sheet1
         try:
             hist = ss.worksheet("History")
@@ -143,95 +136,4 @@ def fetch_data(url):
                 tds = tbody.find_all('td')
                 if len(tds) >= 4:
                     p_list["美品"], p_list["PSA10"], p_list["差額"], p_list["比率"] = tds[0].text, tds[1].text, tds[2].text, tds[3].text
-            return {"名稱": name, "圖片": img_url, **p_list}
-        except: return None
-        finally: browser.close()
-
-# 6. 頂部導航
-head_col, ctrl_col = st.columns([5, 2])
-with head_col: st.title("🛡️ TCG Master Quant Pro")
-
-with ctrl_col:
-    # 💡 新功能：控制台內加埋匯率設定
-    with st.popover("⚙️ 控制台", use_container_width=True):
-        st.write("### 📊 系統設定")
-        rate = st.number_input("今日日元匯率 (JPY/HKD)", value=0.051, format="%.4f")
-        st.write("---")
-        pw = st.text_input("管理授權碼", type="password")
-        if main_sheet and pw == st.secrets.get("admin_password", "8888"):
-            urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
-            new_urls = st.text_area("監控名單:", value="\n".join(urls), height=200)
-            if st.button("💾 儲存並同步"):
-                main_sheet.clear()
-                main_sheet.update('A1', [[u.strip()] for u in new_urls.split("\n") if u.strip()])
-                st.cache_data.clear()
-                st.rerun()
-
-# 7. 主介面
-st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
-_, ball_mid, _ = st.columns([1, 1, 1])
-with ball_mid:
-    start_capture = st.button("M", key="master_ball_final")
-
-# 8. 核心加載 (分身術 + 港幣計算)
-if start_capture:
-    urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
-    if not urls:
-        st.warning("名單內無網址。")
-    else:
-        st.markdown('<div class="flash-effect"></div>', unsafe_allow_html=True)
-        all_results = []
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        status = st.status("🚀 大師球極速捕捉中...", expanded=True)
-        
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_url = {executor.submit(fetch_data, url): url for url in urls}
-            display_area = st.container()
-            current_batch = []
-            count = 0
-
-            for future in future_to_url:
-                count += 1
-                res = future.result()
-                if res:
-                    all_results.append(res)
-                    current_batch.append(res)
-                
-                if len(current_batch) == 3 or count == len(urls):
-                    with display_area:
-                        st.divider()
-                        cols = st.columns(3)
-                        for col_idx, item in enumerate(current_batch):
-                            # 計算港幣
-                            val_bihin = parse_yen(item['美品'])
-                            val_psa10 = parse_yen(item['PSA10'])
-                            hkd_bihin = f"HK$ {val_bihin * rate:,.0f}"
-                            hkd_psa10 = f"HK$ {val_psa10 * rate:,.0f}"
-                            
-                            with cols[col_idx]:
-                                st.image(item["圖片"], use_container_width=True)
-                                st.markdown(f"**{item['名稱']}**")
-                                st.markdown(f"""
-                                <div class="price-card">
-                                    <div class="price-row"><span class="price-label" style="color:#e67e22;">● 美品</span><span class="price-val">{item['美品']}</span></div>
-                                    <div class="price-row"><span class="price-label">└ 換算港幣</span><span class="hkd-val">{hkd_bihin}</span></div>
-                                    <div class="price-sep"></div>
-                                    <div class="price-row"><span class="price-label" style="color:#3498db;">● PSA10</span><span class="price-val">{item['PSA10']}</span></div>
-                                    <div class="price-row"><span class="price-label">└ 換算港幣</span><span class="hkd-val">{hkd_psa10}</span></div>
-                                    <div class="price-sep"></div>
-                                    <div class="price-row"><span class="price-label">● 差額</span><span class="price-val">{item['差額']}</span></div>
-                                    <div class="price-row"><span class="price-label">● 比率</span><span class="price-val">{item['比率']}</span></div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                    current_batch = []
-            
-        status.update(label="✅ 全體收服完成！數據已更新。", state="complete", expanded=False)
-        
-        if history_sheet and all_results:
-            h_rows = [[now, r["名稱"], r["圖片"], r["PSA10"], r["美品"], r["差額"], r["比率"]] for r in all_results]
-            history_sheet.append_rows(h_rows)
-else:
-    st.info("💡 準備就緒。點擊大師球啟動「分身術」極速捕捉。")
-
-st.divider()
-st.caption("阿強 TCG Cloud Pro | 2026 匯率換算極速版")
+            return {"名稱": name, "圖片": img_url, "美品": p_list["美品"], "PSA10": p_list["PSA10"], "差額": p_list["差額"],
