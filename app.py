@@ -86,14 +86,14 @@ def parse_yen(yen_str):
     except:
         return 0
 
-# 4. Google Sheet 連接 (已更新 ID)
+# 4. Google Sheet 連接 (大佬的專屬 ID)
 @st.cache_resource
 def connect_gsheet():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
         client = gspread.authorize(creds)
-        # ✅ 第 89 行：已換上大佬的新 Sheet ID
+        # ✅ 使用大佬張圖入面嗰串 ID
         ss = client.open_by_key("1gGDyFS3Ecq0h45zvVpV72ZimxKvrY-HhNUB4IBLNG4")
         main = ss.sheet1
         try:
@@ -136,4 +136,46 @@ def fetch_data(url):
                 tds = tbody.find_all('td')
                 if len(tds) >= 4:
                     p_list["美品"], p_list["PSA10"], p_list["差額"], p_list["比率"] = tds[0].text, tds[1].text, tds[2].text, tds[3].text
-            return {"名稱": name, "圖片": img_url, "美品": p_list["美品"], "PSA10": p_list["PSA10"], "差額": p_list["差額"],
+            
+            # ✅ 呢度一定要對齊，唔好再漏咗括號喇！
+            return {
+                "名稱": name, 
+                "圖片": img_url, 
+                "美品": p_list["美品"], 
+                "PSA10": p_list["PSA10"], 
+                "差額": p_list["差額"], 
+                "比率": p_list["比率"]
+            }
+        except:
+            return None
+        finally:
+            browser.close()
+
+# 6. 頂部導航
+head_col, ctrl_col = st.columns([5, 2])
+with head_col: st.title("🛡️ TCG Master Quant Pro")
+with ctrl_col:
+    with st.popover("⚙️ 控制台", use_container_width=True):
+        st.write("### 📊 系統設定")
+        rate = st.number_input("日元匯率 (JPY/HKD)", value=0.051, format="%.4f")
+        st.write("---")
+        pw = st.text_input("管理授權碼", type="password")
+        if main_sheet and pw == st.secrets.get("admin_password", "8888"):
+            urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
+            new_urls = st.text_area("監控名單:", value="\n".join(urls), height=200)
+            if st.button("💾 儲存名單"):
+                main_sheet.clear()
+                main_sheet.update('A1', [[u.strip()] for u in new_urls.split("\n") if u.strip()])
+                st.cache_data.clear()
+                st.rerun()
+
+# 7. 主介面：大師球
+st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
+_, ball_mid, _ = st.columns([1, 1, 1])
+with ball_mid:
+    start_capture = st.button("M", key="master_ball_final_run")
+
+# 8. 核心加載邏輯
+if start_capture:
+    urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
+    if not urls:
