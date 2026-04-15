@@ -2,75 +2,88 @@ import streamlit as st
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import os
+import pandas as pd
 
-# 網頁設定
-st.set_page_config(page_title="TCG Quant Tracker", page_icon="📈")
+st.set_page_config(page_title="TCG Portfolio Quant", page_icon="📊", layout="wide")
 
-st.title("📈 阿強 TCG Quant 實時監控系統")
-st.markdown("針對 Pokeca-chart 嘅動態數據抓取引擎已啟動。")
-st.divider()
+st.title("📊 TCG Quant 持倉監控面板")
+st.markdown("一次過監控多張目標卡片，實時分析溢價機會。")
 
-# 雲端自動安裝 Playwright 瀏覽器
+# 1. 確保 Playwright 環境
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
 install_browser()
 
-# 爬蟲核心
-def fetch_data(url):
+# 2. 爬蟲核心 (單次抓取)
+def fetch_card_data(url):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.set_extra_http_headers({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
-        
+        page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
         try:
-            # 暴力破門模式
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000) # 強行等待 5 秒讓 JS 載入價錢
-            
+            page.wait_for_timeout(5000)
             html = page.content()
             soup = BeautifulSoup(html, 'html.parser')
             text_blocks = list(soup.stripped_strings)
             
-            def find_value(keyword, unit):
+            def find_v(keyword, unit):
                 for i, text in enumerate(text_blocks):
                     if keyword in text:
-                        for j in range(1, 16):
+                        for j in range(1, 10):
                             if i + j < len(text_blocks) and unit in text_blocks[i+j]:
                                 return text_blocks[i+j]
-                return "未搵到"
+                return "N/A"
 
+            card_id = url.rstrip('/').split('/')[-1].upper()
             return {
-                "raw": find_value("美品価格", "円"),
-                "psa": find_value("PSA10価格", "円"),
-                "spread": find_value("差額", "円"),
-                "ratio": find_value("比率", "%")
+                "卡片編號": card_id,
+                "美品価格": find_v("美品価格", "円"),
+                "PSA10価格": find_v("PSA10価格", "円"),
+                "差額": find_v("差額", "円"),
+                "溢價比率": find_v("比率", "%")
             }
-        except Exception as e:
-            return {"error": str(e)}
+        except:
+            return None
         finally:
             browser.close()
 
-# 介面
-url_input = st.text_input("🔗 請輸入 Pokeca-chart 網址:", placeholder="https://grading.pokeca-chart.com/...")
-if st.button("🚀 執行深度抓取") and url_input:
-    card_code = url_input.rstrip('/').split('/')[-1].upper()
-    with st.spinner(f"🤖 阿強正在潛入伺服器抓取 {card_code}..."):
-        result = fetch_data(url_input)
+# 3. UI 介面 - 管理監控清單
+st.sidebar.header("⚙️ 監控名單管理")
+# 預設一啲卡片畀你測試
+default_urls = [
+    "https://grading.pokeca-chart.com/sm8b-219-150/",
+    "https://grading.pokeca-chart.com/m2a-250-193/"
+]
+
+# 讓用戶輸入多個網址，一行一個
+urls_text = st.sidebar.text_area("貼入網址清單 (每行一個):", value="\n".join(default_urls), height=200)
+target_urls = [line.strip() for line in urls_text.split("\n") if line.strip()]
+
+# 4. 執行按鈕
+if st.button(f"🚀 開始更新所有卡片 ({len(target_urls)} 張)"):
+    results = []
+    progress_bar = st.progress(0)
+    
+    for idx, url in enumerate(target_urls):
+        st.write(f"正在抓取: {url} ...")
+        data = fetch_card_data(url)
+        if data:
+            results.append(data)
+        progress_bar.progress((idx + 1) / len(target_urls))
+    
+    # 5. 展示匯總表格
+    if results:
+        df = pd.DataFrame(results)
+        st.divider()
+        st.subheader("📋 實時市場數據匯總")
+        st.dataframe(df, use_container_width=True)
         
-        if "error" in result:
-            st.error(f"抓取超時: {result['error']}")
-        else:
-            st.success(f"✅ 成功獲取 {card_code} 實時報價！")
-            c1, c2 = st.columns(2)
-            c1.metric("裸卡 (美品)", result["raw"])
-            c2.metric("PSA 10 價格", result["psa"])
-            
-            c3, c4 = st.columns(2)
-            c3.metric("差額", result["spread"])
-            c4.metric("溢價比率", result["ratio"])
-            
+        # 簡單分析：邊張最抵 (假設溢價比率越低越有潛力)
+        st.info("💡 提示：你可以點擊表格標題進行排序，快速搵出溢價最低嘅卡片。")
+    else:
+        st.error("所有卡片抓取失敗，請檢查網址或稍後再試。")
+
 st.divider()
-st.caption("阿強 TCG Market Quant 系統 | Powered by Streamlit & Playwright")
+st.caption("阿強 TCG Dashboard | 支援同時監控無限張卡片")
