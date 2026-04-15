@@ -3,3 +3,4 @@ playwright
 beautifulsoup4
 deep_translator
 gspread
+google-auth
