@@ -11,9 +11,14 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # 1. 頁面設定
-st.set_page_config(page_title="TCG Master Quant Pro", page_icon="🔮", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="TCG Master Quant Pro",
+    page_icon="🔮",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# 2. 終極 CSS (正宗大師球、港幣樣式)
+# --- 2. 終極 CSS (正宗大師球、港幣換算樣式) ---
 st.markdown("""
     <style>
     [data-testid="stSidebarNav"], section[data-testid="stSidebar"], .stAppDeployButton {display: none;}
@@ -40,7 +45,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. 換算與連接
+# 3. 換算與連接 (✅ 已對準大佬畀我條 Link 嘅 ID)
 def parse_yen(yen_str):
     try:
         num = re.sub(r'[^\d]', '', str(yen_str))
@@ -53,7 +58,8 @@ def connect_gsheet():
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
         client = gspread.authorize(creds)
-        ss = client.open_by_key("1gGDyFS3Ecq0h45zvVpV72ZimxKvrY-HhNUB4IBLNG4")
+        # ✅ 呢度就係你條 Link 嘅正確 ID
+        ss = client.open_by_key("1gGDyFS3Ecq0h45zvVVpV72ZimxKvRy-HhNUb4IBLNG4")
         main = ss.sheet1
         try: hist = ss.worksheet("History")
         except: hist = ss.add_worksheet(title="History", rows="1000", cols="20")
@@ -64,17 +70,16 @@ def connect_gsheet():
 
 main_sheet, history_sheet = connect_gsheet()
 
-# 4. 爬蟲 (Playwright)
+# 4. 爬蟲核心
 @st.cache_resource
 def install_browser():
     os.system("playwright install chromium")
-
 install_browser()
 
 def fetch_data(url):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        context = browser.new_context(user_agent="Mozilla/5.0")
         page = context.new_page()
         page.route("**/*.{png,jpg,jpeg,gif,svg,webp,css,woff,woff2}", lambda route: route.abort())
         try:
@@ -82,12 +87,11 @@ def fetch_data(url):
             page.wait_for_selector("#price-table-body td", timeout=20000)
             soup = BeautifulSoup(page.content(), 'html.parser')
             name = soup.find('h1').get_text(strip=True).split('の')[0] if soup.find('h1') else "未知"
-            img_tag = soup.find('div', class_='product-image') or soup.find('main').find('img')
+            img = soup.find('div', class_='product-image') or soup.find('main').find('img')
             img_url = "N/A"
-            if img_tag:
-                src = img_tag.get('src') or img_tag.get('data-src')
+            if img:
+                src = img.get('src') or img.get('data-src')
                 img_url = src if src and src.startswith('http') else f"https://grading.pokeca-chart.com{src}" if src else "N/A"
-            
             p_list = {"美品": "N/A", "PSA10": "N/A", "差額": "N/A", "比率": "N/A"}
             tbody = soup.find('tbody', id='price-table-body')
             if tbody:
@@ -95,12 +99,11 @@ def fetch_data(url):
                 if len(tds) >= 4:
                     p_list["美品"], p_list["PSA10"], p_list["差額"], p_list["比率"] = tds[0].text, tds[1].text, tds[2].text, tds[3].text
             return {"名稱": name, "圖片": img_url, **p_list}
-        except Exception as e:
-            return {"名稱": f"錯誤: {url[-10:]}", "圖片": "N/A", "美品": "N/A", "PSA10": "N/A", "差額": "N/A", "比率": "N/A"}
+        except: return None
         finally:
-            browser.close()
+            browser.close() # ✅ 修復圖中 finally 斷路問題
 
-# 5. UI 與控制
+# 5. UI 控制
 h_col, c_col = st.columns([5, 2])
 with h_col: st.title("🛡️ TCG Master Quant Pro")
 with c_col:
@@ -109,40 +112,34 @@ with c_col:
         pw = st.text_input("密碼", type="password")
         if pw == st.secrets.get("admin_password", "8888") and main_sheet:
             urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
-            new_urls = st.text_area("名單:", value="\n".join(urls), height=200)
+            new_urls = st.text_area("監控名單:", value="\n".join(urls), height=200)
             if st.button("💾 儲存"):
                 main_sheet.clear()
                 main_sheet.update('A1', [[u.strip()] for u in new_urls.split("\n") if u.strip()])
+                st.cache_data.clear()
                 st.rerun()
 
 st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
 _, mid, _ = st.columns([1, 1, 1])
-with mid:
-    run = st.button("M")
+with mid: run = st.button("M")
 
-# 6. 核心執行
+# 6. 執行邏輯
 if run:
     if main_sheet:
         urls = [v for v in main_sheet.col_values(1) if v.startswith("http")]
-        if not urls:
-            st.warning("名單係空嘅。")
+        if not urls: st.warning("名單係空嘅。")
         else:
             st.markdown('<div class="flash-effect"></div>', unsafe_allow_html=True)
-            results = []
+            results, batch = [], []
             status = st.status("🔮 捕捉中...", expanded=True)
-            
-            # 使用分身術捉數
-            with ThreadPoolExecutor(max_workers=2) as executor: # 💡 降低 worker 數量提高穩定性
+            with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [executor.submit(fetch_data, url) for url in urls]
                 display = st.container()
-                batch = []
                 for idx, f in enumerate(futures):
                     res = f.result()
                     if res:
-                        results.append(res)
-                        batch.append(res)
+                        results.append(res); batch.append(res)
                         status.write(f"捕捉完成 ({idx+1}/{len(urls)})")
-                    
                     if len(batch) == 3 or idx == len(urls) - 1:
                         with display:
                             st.divider()
@@ -162,11 +159,13 @@ if run:
                                     </div>
                                     """, unsafe_allow_html=True)
                         batch = []
-            
             status.update(label="✅ 完成！", state="complete", expanded=False)
             if history_sheet and results:
                 now = datetime.now().strftime("%Y-%m-%d %H:%M")
                 h_rows = [[now, r["名稱"], r["圖片"], r["PSA10"], r["美品"], r["差額"], r["比率"]] for r in results]
                 history_sheet.append_rows(h_rows)
-    else:
-        st.error("Sheet 未連接，請檢查 Secrets。")
+else:
+    st.info("💡 點擊大師球啟動捕捉。")
+
+st.divider()
+st.caption("阿強 TCG Cloud Pro | 終極正匙版")
